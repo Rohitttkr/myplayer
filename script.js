@@ -50,14 +50,16 @@ app.get("/play", async (req, res) => {
     console.log(`🎧 Requesting: ${query}`);
 
     try {
-        // Step 1: Search on YT Music for better reliability
-        const output = await ytDlp(`ytmsearch1:${query}`, {
-            dumpJson: true,
-            noPlaylist: true,
-            f: "bestaudio",
-            noWarnings: true,
-            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        });
+// ✅ Correct Way to Search in Play/Download Route
+const output = await ytDlp(query, {
+    // Ye line batati hai ki pehla result uthao aur YT Music par search karo
+    defaultSearch: "ytmsearch1", 
+    dumpJson: true,
+    noPlaylist: true,
+    f: "bestaudio",
+    noWarnings: true,
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+});
 
         if (!output || !output.url) throw new Error("Audio URL not found");
 
