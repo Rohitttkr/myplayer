@@ -47,51 +47,48 @@ app.get("/suggest", async (req, res) => {
     }
 });
 
-// ✅ 2. PLAY STREAM ROUTE (Updated with Logs)
-app.get("/play", (req, res) => {
+// ✅ 2. PLAY STREAM ROUTE (Direct URL Method)
+app.get("/play", async (req, res) => { // <--- Yahan 'async' hona chahiye
     const query = req.query.q;
     if (!query) return res.status(400).send("No song provided");
 
-    console.log(`🎧 Streaming Request: ${query}`);
+    console.log(`🎧 Direct Streaming: ${query}`);
 
     try {
-     const ytProcess = ytDlp.exec(
-    `ytsearch1:${query}`,
-    { 
-        o: "-", 
-        f: "bestaudio[ext=m4a]/bestaudio", // Specific format maango
-        noPlaylist: true, 
-        quiet: true, // Faltu logs band karo
-        noWarnings: true 
-    },
-    { stdio: ["ignore", "pipe", "ignore"] }
-);
+        // Step 1: Gaane ka direct stream URL nikaalo
+        const output = await ytDlp(`ytsearch1:${query}`, {
+            dumpJson: true,
+            noPlaylist: true,
+            f: "bestaudio",
+            noWarnings: true
+        });
 
-        // Header set karein
+        // Agar result nahi mila
+        if (!output || !output.url) {
+            console.error("❌ Audio URL not found");
+            return res.status(404).send("Song not found");
+        }
+
+        const audioUrl = output.url; 
+        console.log("🔗 Audio URL fetched successfully!");
+
+        // Step 2: Direct URL ko FFmpeg mein pass karo
         res.setHeader("Content-Type", "audio/mpeg");
 
-        ffmpeg(ytProcess.stdout)
+        ffmpeg(audioUrl)
             .audioCodec("libmp3lame")
             .audioBitrate(128)
             .format("mp3")
-            .on("start", () => {
-                console.log("✅ FFmpeg conversion started...");
-            })
-            .on("progress", (progress) => {
-                console.log(`⏳ Buffering: ${progress.targetSize} KB converted`);
-            })
+            .on("start", () => console.log("✅ Streaming started..."))
             .on("error", (err) => {
                 console.error("❌ FFmpeg Error:", err.message);
-                if (!res.headersSent) res.status(500).send("Stream Error");
-            })
-            .on("end", () => {
-                console.log("🎵 Streaming finished.");
+                if (!res.headersSent) res.end();
             })
             .pipe(res, { end: true });
 
     } catch (err) {
-        console.error("❌ Process Error:", err);
-        res.status(500).end();
+        console.error("❌ yt-dlp Error:", err.message);
+        res.status(500).send("Search Error");
     }
 });
 
