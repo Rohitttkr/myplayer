@@ -9,67 +9,53 @@ const PORT = process.env.PORT || 3000;
 ffmpeg.setFfmpegPath(ffmpegPath);
 app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ 1. HOME ROUTE
-app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
-
-// ✅ 2. RELIABLE INSTANCES (Sorted by stability)
+// ✅ 1. NEW STABLE INSTANCES
 const INSTANCES = [
-    "https://invidious.flokinet.to",
-    "https://invidious.sethforprivacy.com",
-    "https://inv.vern.cc",
-    "https://invidious.lunar.icu"
+    "https://invidious.asir.dev",
+    "https://iv.melmac.space",
+    "https://invidious.no-logs.com",
+    "https://invidious.io.lol"
 ];
 
-// Helper: Fetch with Timeout & Failover
-async function fetchSafe(endpoint) {
+async function fetchFromInvidious(endpoint) {
     for (let base of INSTANCES) {
         try {
-            console.log(`📡 Trying Instance: ${base}`);
-            const response = await fetch(`${base}/api/v1${endpoint}`, { signal: AbortSignal.timeout(5000) });
-            const text = await response.text();
-            
-            // Check if response is actually JSON
-            if (text.startsWith("{") || text.startsWith("[")) {
-                return JSON.parse(text);
-            }
+            console.log(`📡 Trying: ${base}`);
+            const res = await fetch(`${base}/api/v1${endpoint}`, { signal: AbortSignal.timeout(6000) });
+            const data = await res.json();
+            if (data) return data;
         } catch (e) {
-            console.log(`⚠️ Instance ${base} failed, trying next...`);
+            console.log(`❌ ${base} failed`);
         }
     }
-    throw new Error("Sare servers busy hain. Please 2 minute baad try karein.");
+    throw new Error("All servers are busy. Try again in 10 seconds.");
 }
 
-// ✅ 3. SUGGESTIONS
-app.get("/suggest", async (req, res) => {
-    try {
-        const response = await fetch(`https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(req.query.q)}`);
-        const data = await response.json();
-        res.json(data[1].slice(0, 7));
-    } catch (err) { res.json([]); }
-});
-
-// ✅ 4. PLAY STREAM ROUTE
+// ✅ 2. PLAY ROUTE (With Extra Safety)
 app.get("/play", async (req, res) => {
     const query = req.query.q;
-    if (!query) return res.status(400).send("Gaana search karein");
+    if (!query) return res.status(400).send("No query");
 
     try {
-        // Step 1: Search
-        const searchData = await fetchSafe(`/search?q=${encodeURIComponent(query)}&type=video`);
-        if (!searchData || searchData.length === 0) throw new Error("No results");
-
-        const videoId = searchData[0].videoId;
+        console.log(`🔍 Searching for: ${query}`);
+        const searchResults = await fetchFromInvidious(`/search?q=${encodeURIComponent(query)}&type=video`);
         
-        // Step 2: Get Stream URL directly from Invidious
-        const videoData = await fetchSafe(`/videos/${videoId}`);
-        const audioFormat = videoData.adaptiveFormats.find(f => f.type.includes("audio/webm") || f.type.includes("audio/mp4"));
-        
-        if (!audioFormat) throw new Error("Audio stream not found");
+        if (!searchResults || searchResults.length === 0) throw new Error("No results found");
 
-        console.log("🎵 Streaming started via Invidious...");
+        const videoId = searchResults[0].videoId;
+        const videoData = await fetchFromInvidious(`/videos/${videoId}`);
+
+        // Error handling for 'find'
+        if (!videoData || !videoData.adaptiveFormats) {
+            throw new Error("Stream data missing");
+        }
+
+        const audioStream = videoData.adaptiveFormats.find(f => f.type.includes("audio")) || videoData.formatStreams[0];
+
+        if (!audioStream || !audioStream.url) throw new Error("No playable URL");
 
         res.setHeader("Content-Type", "audio/mpeg");
-        ffmpeg(audioFormat.url)
+        ffmpeg(audioStream.url)
             .audioCodec("libmp3lame")
             .audioBitrate(128)
             .format("mp3")
@@ -82,18 +68,14 @@ app.get("/play", async (req, res) => {
     }
 });
 
-// ✅ 5. DOWNLOAD ROUTE
-app.get("/download", async (req, res) => {
+// ✅ 3. SUGGESTIONS & HOME (Keep as is)
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+app.get("/suggest", async (req, res) => {
     try {
-        const query = req.query.q;
-        const searchData = await fetchSafe(`/search?q=${encodeURIComponent(query)}&type=video`);
-        const videoId = searchData[0].videoId;
-        const videoData = await fetchSafe(`/videos/${videoId}`);
-        const audioUrl = videoData.adaptiveFormats.find(f => f.type.includes("audio")).url;
-
-        res.setHeader("Content-Disposition", `attachment; filename="song.mp3"`);
-        ffmpeg(audioUrl).audioCodec("libmp3lame").format("mp3").pipe(res);
-    } catch (err) { res.status(500).send("Download error"); }
+        const response = await fetch(`https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(req.query.q)}`);
+        const data = await response.json();
+        res.json(data[1].slice(0, 7));
+    } catch (err) { res.json([]); }
 });
 
-app.listen(PORT, () => console.log(`🚀 Music App Ready: http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Ready at ${PORT}`));
