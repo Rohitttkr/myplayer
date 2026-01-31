@@ -12,22 +12,31 @@ app.use(express.static(path.join(__dirname, "public")));
 // ✅ 1. HOME ROUTE
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
-// ✅ 2. HELPER: Multiple Piped Instances (Taki error na aaye)
-const PIPED_INSTANCES = [
-    "https://pipedapi.kavin.rocks",
-    "https://api.piped.victr.me",
-    "https://piped-api.garudalinux.org",
-    "https://pipedapi.drgns.space"
+// ✅ 2. RELIABLE INSTANCES (Sorted by stability)
+const INSTANCES = [
+    "https://invidious.flokinet.to",
+    "https://invidious.sethforprivacy.com",
+    "https://inv.vern.cc",
+    "https://invidious.lunar.icu"
 ];
 
-async function fetchFromPiped(endpoint) {
-    for (let instance of PIPED_INSTANCES) {
+// Helper: Fetch with Timeout & Failover
+async function fetchSafe(endpoint) {
+    for (let base of INSTANCES) {
         try {
-            const response = await fetch(`${instance}${endpoint}`);
-            if (response.ok) return await response.json();
-        } catch (e) { console.log(`Retry: Instance ${instance} failed.`); }
+            console.log(`📡 Trying Instance: ${base}`);
+            const response = await fetch(`${base}/api/v1${endpoint}`, { signal: AbortSignal.timeout(5000) });
+            const text = await response.text();
+            
+            // Check if response is actually JSON
+            if (text.startsWith("{") || text.startsWith("[")) {
+                return JSON.parse(text);
+            }
+        } catch (e) {
+            console.log(`⚠️ Instance ${base} failed, trying next...`);
+        }
     }
-    throw new Error("All instances failed");
+    throw new Error("Sare servers busy hain. Please 2 minute baad try karein.");
 }
 
 // ✅ 3. SUGGESTIONS
@@ -42,21 +51,25 @@ app.get("/suggest", async (req, res) => {
 // ✅ 4. PLAY STREAM ROUTE
 app.get("/play", async (req, res) => {
     const query = req.query.q;
-    if (!query) return res.status(400).send("No query");
+    if (!query) return res.status(400).send("Gaana search karein");
 
     try {
-        console.log(`🔍 Searching: ${query}`);
-        const searchData = await fetchFromPiped(`/search?q=${encodeURIComponent(query)}&filter=music_songs`);
-        
-        if (!searchData.items || !searchData.items[0]) throw new Error("No results");
+        // Step 1: Search
+        const searchData = await fetchSafe(`/search?q=${encodeURIComponent(query)}&type=video`);
+        if (!searchData || searchData.length === 0) throw new Error("No results");
 
-        const videoId = searchData.items[0].url.split("v=")[1];
-        const streamData = await fetchFromPiped(`/streams/${videoId}`);
+        const videoId = searchData[0].videoId;
         
-        const audioStream = streamData.audioStreams.find(s => s.format === "M4A") || streamData.audioStreams[0];
+        // Step 2: Get Stream URL directly from Invidious
+        const videoData = await fetchSafe(`/videos/${videoId}`);
+        const audioFormat = videoData.adaptiveFormats.find(f => f.type.includes("audio/webm") || f.type.includes("audio/mp4"));
+        
+        if (!audioFormat) throw new Error("Audio stream not found");
+
+        console.log("🎵 Streaming started via Invidious...");
 
         res.setHeader("Content-Type", "audio/mpeg");
-        ffmpeg(audioStream.url)
+        ffmpeg(audioFormat.url)
             .audioCodec("libmp3lame")
             .audioBitrate(128)
             .format("mp3")
@@ -64,8 +77,8 @@ app.get("/play", async (req, res) => {
             .pipe(res, { end: true });
 
     } catch (err) {
-        console.error("❌ Error:", err.message);
-        res.status(500).send("Service busy. Try again.");
+        console.error("❌ Final Error:", err.message);
+        res.status(500).send(err.message);
     }
 });
 
@@ -73,10 +86,10 @@ app.get("/play", async (req, res) => {
 app.get("/download", async (req, res) => {
     try {
         const query = req.query.q;
-        const searchData = await fetchFromPiped(`/search?q=${encodeURIComponent(query)}&filter=music_songs`);
-        const videoId = searchData.items[0].url.split("v=")[1];
-        const streamData = await fetchFromPiped(`/streams/${videoId}`);
-        const audioUrl = streamData.audioStreams.find(s => s.format === "M4A").url;
+        const searchData = await fetchSafe(`/search?q=${encodeURIComponent(query)}&type=video`);
+        const videoId = searchData[0].videoId;
+        const videoData = await fetchSafe(`/videos/${videoId}`);
+        const audioUrl = videoData.adaptiveFormats.find(f => f.type.includes("audio")).url;
 
         res.setHeader("Content-Disposition", `attachment; filename="song.mp3"`);
         ffmpeg(audioUrl).audioCodec("libmp3lame").format("mp3").pipe(res);
