@@ -47,50 +47,43 @@ app.get("/suggest", async (req, res) => {
     }
 });
 
-// ✅ 2. PLAY STREAM ROUTE (Direct URL Method)
-app.get("/play", async (req, res) => { // <--- Yahan 'async' hona chahiye
+// ✅ 2. PLAY STREAM ROUTE (YouTube Music Method)
+app.get("/play", async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).send("No song provided");
 
-    console.log(`🎧 Direct Streaming: ${query}`);
+    console.log(`🎧 Searching on YT Music: ${query}`);
 
     try {
-        // Step 1: Gaane ka direct stream URL nikaalo
-        const output = await ytDlp(`ytsearch1:${query}`, {
+        const output = await ytDlp(`ytmsearch1:${query}`, { // <--- 'ytm' add kiya
             dumpJson: true,
             noPlaylist: true,
             f: "bestaudio",
-            noWarnings: true
+            noWarnings: true,
+            // 🛡️ Ye line YouTube ko batati hai ki hum real browser hain
+            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         });
 
-        // Agar result nahi mila
         if (!output || !output.url) {
-            console.error("❌ Audio URL not found");
-            return res.status(404).send("Song not found");
+            throw new Error("No URL found");
         }
 
-        const audioUrl = output.url; 
-        console.log("🔗 Audio URL fetched successfully!");
-
-        // Step 2: Direct URL ko FFmpeg mein pass karo
         res.setHeader("Content-Type", "audio/mpeg");
 
-        ffmpeg(audioUrl)
+        ffmpeg(output.url)
             .audioCodec("libmp3lame")
             .audioBitrate(128)
             .format("mp3")
-            .on("start", () => console.log("✅ Streaming started..."))
-            .on("error", (err) => {
-                console.error("❌ FFmpeg Error:", err.message);
-                if (!res.headersSent) res.end();
-            })
-            .pipe(res, { end: true });
+            .on("error", (err) => console.log("FFmpeg Error:", err.message))
+            .pipe(res);
 
     } catch (err) {
-        console.error("❌ yt-dlp Error:", err.message);
-        res.status(500).send("Search Error");
+        console.error("❌ Error:", err.message);
+        // Agar YT Music bhi block kare, toh user ko batao
+        res.status(500).send("YouTube is blocking this request. Try again later.");
     }
 });
+
 
 // ✅ 3. DOWNLOAD ROUTE
 app.get("/download", (req, res) => {
