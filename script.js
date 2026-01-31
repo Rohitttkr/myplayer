@@ -55,11 +55,17 @@ app.get("/play", (req, res) => {
     console.log(`🎧 Streaming Request: ${query}`);
 
     try {
-        const ytProcess = ytDlp.exec(
-            `ytsearch1:${query}`,
-            { o: "-", f: "bestaudio", noPlaylist: true, q: "" },
-            { stdio: ["ignore", "pipe", "ignore"] }
-        );
+     const ytProcess = ytDlp.exec(
+    `ytsearch1:${query}`,
+    { 
+        o: "-", 
+        f: "bestaudio[ext=m4a]/bestaudio", // Specific format maango
+        noPlaylist: true, 
+        quiet: true, // Faltu logs band karo
+        noWarnings: true 
+    },
+    { stdio: ["ignore", "pipe", "ignore"] }
+);
 
         // Header set karein
         res.setHeader("Content-Type", "audio/mpeg");
