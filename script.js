@@ -1,75 +1,45 @@
 const express = require("express");
-const ffmpeg = require("fluent-ffmpeg");
-const ffmpegPath = require("ffmpeg-static");
 const path = require("path");
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-ffmpeg.setFfmpegPath(ffmpegPath);
 app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ 1. NEW STABLE INSTANCES
-const INSTANCES = [
-    "https://invidious.asir.dev",
-    "https://iv.melmac.space",
-    "https://invidious.no-logs.com",
-    "https://invidious.io.lol"
-];
+// ✅ 1. HOME ROUTE
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
-async function fetchFromInvidious(endpoint) {
-    for (let base of INSTANCES) {
-        try {
-            console.log(`📡 Trying: ${base}`);
-            const res = await fetch(`${base}/api/v1${endpoint}`, { signal: AbortSignal.timeout(6000) });
-            const data = await res.json();
-            if (data) return data;
-        } catch (e) {
-            console.log(`❌ ${base} failed`);
-        }
-    }
-    throw new Error("All servers are busy. Try again in 10 seconds.");
-}
-
-// ✅ 2. PLAY ROUTE (With Extra Safety)
+// ✅ 2. PLAY ROUTE (JioSaavn API - No YouTube, No Blocks)
 app.get("/play", async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).send("No query");
 
     try {
-        console.log(`🔍 Searching for: ${query}`);
-        const searchResults = await fetchFromInvidious(`/search?q=${encodeURIComponent(query)}&type=video`);
+        console.log(`🎵 Searching Music API: ${query}`);
         
-        if (!searchResults || searchResults.length === 0) throw new Error("No results found");
+        // Search for song
+        const searchRes = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`);
+        const searchData = await searchRes.json();
 
-        const videoId = searchResults[0].videoId;
-        const videoData = await fetchFromInvidious(`/videos/${videoId}`);
-
-        // Error handling for 'find'
-        if (!videoData || !videoData.adaptiveFormats) {
-            throw new Error("Stream data missing");
+        if (!searchData.data || searchData.data.results.length === 0) {
+            return res.status(404).send("Song not found");
         }
 
-        const audioStream = videoData.adaptiveFormats.find(f => f.type.includes("audio")) || videoData.formatStreams[0];
+        // Get the top result's best quality download link
+        const song = searchData.data.results[0];
+        const downloadUrl = song.downloadUrl[song.downloadUrl.length - 1].url; // Highest quality link
 
-        if (!audioStream || !audioStream.url) throw new Error("No playable URL");
+        console.log(`✅ Playing: ${song.name}`);
 
-        res.setHeader("Content-Type", "audio/mpeg");
-        ffmpeg(audioStream.url)
-            .audioCodec("libmp3lame")
-            .audioBitrate(128)
-            .format("mp3")
-            .on("error", (err) => console.log("Stream Error:", err.message))
-            .pipe(res, { end: true });
+        // Direct redirect to the audio URL (No FFmpeg needed, much faster!)
+        res.redirect(downloadUrl);
 
     } catch (err) {
-        console.error("❌ Final Error:", err.message);
-        res.status(500).send(err.message);
+        console.error("❌ Error:", err.message);
+        res.status(500).send("Music server busy, try again.");
     }
 });
 
-// ✅ 3. SUGGESTIONS & HOME (Keep as is)
-app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+// ✅ 3. SUGGESTIONS
 app.get("/suggest", async (req, res) => {
     try {
         const response = await fetch(`https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(req.query.q)}`);
@@ -78,4 +48,15 @@ app.get("/suggest", async (req, res) => {
     } catch (err) { res.json([]); }
 });
 
-app.listen(PORT, () => console.log(`🚀 Ready at ${PORT}`));
+// ✅ 4. DOWNLOAD ROUTE
+app.get("/download", async (req, res) => {
+    const query = req.query.q;
+    try {
+        const searchRes = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`);
+        const searchData = await searchRes.json();
+        const downloadUrl = searchData.data.results[0].downloadUrl[searchData.data.results[0].downloadUrl.length - 1].url;
+        res.redirect(downloadUrl);
+    } catch (err) { res.status(500).send("Download error"); }
+});
+
+app.listen(PORT, () => console.log(`🚀 Music App Ready on Port ${PORT}`));
