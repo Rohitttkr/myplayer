@@ -47,12 +47,12 @@ app.get("/suggest", async (req, res) => {
     }
 });
 
-// ✅ 2. PLAY STREAM ROUTE
+// ✅ 2. PLAY STREAM ROUTE (Updated with Logs)
 app.get("/play", (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).send("No song provided");
 
-    console.log(`🎧 Streaming: ${query}`);
+    console.log(`🎧 Streaming Request: ${query}`);
 
     try {
         const ytProcess = ytDlp.exec(
@@ -61,21 +61,31 @@ app.get("/play", (req, res) => {
             { stdio: ["ignore", "pipe", "ignore"] }
         );
 
-        // Header ko FFmpeg shuru hone se pehle bhej dein
+        // Header set karein
         res.setHeader("Content-Type", "audio/mpeg");
-        res.setHeader("Transfer-Encoding", "chunked"); // Browser ko batayega ki data aa raha hai
-
 
         ffmpeg(ytProcess.stdout)
             .audioCodec("libmp3lame")
             .audioBitrate(128)
             .format("mp3")
-            .on("error", () => { })
+            .on("start", () => {
+                console.log("✅ FFmpeg conversion started...");
+            })
+            .on("progress", (progress) => {
+                console.log(`⏳ Buffering: ${progress.targetSize} KB converted`);
+            })
+            .on("error", (err) => {
+                console.error("❌ FFmpeg Error:", err.message);
+                if (!res.headersSent) res.status(500).send("Stream Error");
+            })
+            .on("end", () => {
+                console.log("🎵 Streaming finished.");
+            })
             .pipe(res, { end: true });
 
     } catch (err) {
-        console.error("Stream Error:", err);
-        res.end();
+        console.error("❌ Process Error:", err);
+        res.status(500).end();
     }
 });
 
