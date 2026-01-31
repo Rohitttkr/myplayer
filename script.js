@@ -5,8 +5,7 @@ const ffmpegPath = require("ffmpeg-static");
 const path = require("path");
 
 const app = express();
-const PORT = 3000;
-
+const PORT = process.env.PORT || 3000; // Render ke liye dynamic port
 
 // FFmpeg setup
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -15,108 +14,101 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ 1. SMART SUGGESTION ROUTE (Only Songs Logic)
+// ✅ 1. HOME ROUTE (Manual File Serving)
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// ✅ 2. SMART SUGGESTION ROUTE
 app.get("/suggest", async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json([]);
-
     try {
-        // Hum 'ds=yt' (YouTube datasource) aur 'gl=IN' (India location) use kar rahe hain
-        // Taaki result music se relevat aaye
-        const url = `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&gl=IN&q=${encodeURIComponent(query)}`;
-
+        const url = `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(query)}`;
         const response = await fetch(url);
         const data = await response.json();
-        const rawSuggestions = data[1]; // Google se aayi list
+        const rawSuggestions = data[1];
 
-        // 🛡️ FILTER LOGIC: Faltu cheezein hatao
         const ignoreWords = ["reaction", "review", "roast", "news", "interview", "gameplay", "trailer", "scene", "explained", "cover", "remix", "parody", "tutorial", "challenge", "vlog", "meme", "live", "full movie", "episode", "podcast", "audiobook", "free fire", "bgmi"];
 
         const cleanSuggestions = rawSuggestions.filter(item => {
             const lowerItem = item.toLowerCase();
-            // Agar inme se koi bhi ganda word hai, toh use hata do
             return !ignoreWords.some(badWord => lowerItem.includes(badWord));
         });
 
-        // Top 7 clean results bhejo
         res.json(cleanSuggestions.slice(0, 7));
-
     } catch (err) {
-        console.error("Suggestion Error:", err.message);
         res.json([]);
     }
 });
 
-// ✅ 2. PLAY STREAM ROUTE (YouTube Music Method)
+// ✅ 3. PLAY STREAM ROUTE (YouTube Music + Bot Bypass)
 app.get("/play", async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).send("No song provided");
 
-    console.log(`🎧 Searching on YT Music: ${query}`);
+    console.log(`🎧 Requesting: ${query}`);
 
     try {
-        const output = await ytDlp(`ytmsearch1:${query}`, { // <--- 'ytm' add kiya
+        // Step 1: Search on YT Music for better reliability
+        const output = await ytDlp(`ytmsearch1:${query}`, {
             dumpJson: true,
             noPlaylist: true,
             f: "bestaudio",
             noWarnings: true,
-            // 🛡️ Ye line YouTube ko batati hai ki hum real browser hain
             userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         });
 
-        if (!output || !output.url) {
-            throw new Error("No URL found");
-        }
+        if (!output || !output.url) throw new Error("Audio URL not found");
 
+        // Step 2: Set Headers for smooth streaming
         res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.setHeader("Accept-Ranges", "bytes");
 
+        // Step 3: Convert to MP3 and Pipe
         ffmpeg(output.url)
             .audioCodec("libmp3lame")
             .audioBitrate(128)
             .format("mp3")
-            .on("error", (err) => console.log("FFmpeg Error:", err.message))
-            .pipe(res);
-
-    } catch (err) {
-        console.error("❌ Error:", err.message);
-        // Agar YT Music bhi block kare, toh user ko batao
-        res.status(500).send("YouTube is blocking this request. Try again later.");
-    }
-});
-
-
-// ✅ 3. DOWNLOAD ROUTE
-app.get("/download", (req, res) => {
-    const query = req.query.q;
-    if (!query) return res.status(400).send("No song provided");
-
-    console.log(`⬇️ Downloading: ${query}`);
-
-    try {
-        const ytProcess = ytDlp.exec(
-            `ytsearch1:${query}`,
-            { o: "-", f: "bestaudio", noPlaylist: true, q: "" },
-            { stdio: ["ignore", "pipe", "ignore"] }
-        );
-
-        const safeFilename = query.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "_");
-
-        res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}.mp3"`);
-        res.setHeader("Content-Type", "audio/mpeg");
-        res.setHeader("Transfer-Encoding", "chunked"); // Browser ko batayega ki data aa raha hai
-
-
-
-        ffmpeg(ytProcess.stdout)
-            .audioCodec("libmp3lame")
-            .audioBitrate(128)
-            .format("mp3")
-            .on("error", () => { })
+            .on("start", () => console.log("✅ Stream Started"))
+            .on("error", (err) => {
+                console.error("❌ FFmpeg Error:", err.message);
+                if (!res.headersSent) res.end();
+            })
             .pipe(res, { end: true });
 
     } catch (err) {
-        console.error("Download Error:", err);
-        res.end();
+        console.error("❌ yt-dlp Error:", err.message);
+        res.status(500).send("YouTube is blocking this. Try again later.");
+    }
+});
+
+// ✅ 4. DOWNLOAD ROUTE
+app.get("/download", async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.status(400).send("No song provided");
+
+    try {
+        const output = await ytDlp(`ytmsearch1:${query}`, {
+            dumpJson: true,
+            noPlaylist: true,
+            f: "bestaudio",
+            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        });
+
+        const safeFilename = query.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "_");
+        res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}.mp3"`);
+        res.setHeader("Content-Type", "audio/mpeg");
+
+        ffmpeg(output.url)
+            .audioCodec("libmp3lame")
+            .audioBitrate(192) // Download ke liye thodi better quality
+            .format("mp3")
+            .pipe(res, { end: true });
+
+    } catch (err) {
+        res.status(500).send("Download failed.");
     }
 });
 
