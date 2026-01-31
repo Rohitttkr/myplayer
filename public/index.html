@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pure Music Player</title>
+    <style>
+        /* Dark Theme CSS */
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f0f0f; color: white; display: flex; flex-direction: column; align-items: center; padding-top: 50px; margin: 0; }
+        .container { width: 90%; max-width: 500px; position: relative; }
+        
+        h2 { text-align: center; color: #1db954; margin-bottom: 20px; }
+
+        /* Search Input */
+        .search-wrapper { position: relative; }
+        input { 
+            width: 100%; padding: 15px; border-radius: 30px; border: 1px solid #333; 
+            font-size: 16px; outline: none; background: #222; color: white; 
+            box-sizing: border-box; transition: 0.3s;
+        }
+        input:focus { border-color: #1db954; box-shadow: 0 0 10px rgba(29, 185, 84, 0.3); }
+        
+        /* Suggestions List */
+        .suggestions-box { 
+            position: absolute; top: 60px; left: 0; width: 100%; 
+            background: #222; border-radius: 10px; overflow: hidden; 
+            display: none; z-index: 100; box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        }
+        .suggestion-item { 
+            padding: 12px 20px; cursor: pointer; border-bottom: 1px solid #333; 
+            display: flex; align-items: center;
+        }
+        .suggestion-item:last-child { border-bottom: none; }
+        .suggestion-item:hover { background: #333; color: #1db954; }
+        /* Music Icon before suggestion */
+        .suggestion-item::before { content: "🎵"; margin-right: 10px; font-size: 12px; }
+
+        /* Player UI */
+        .player-box { 
+            margin-top: 40px; text-align: center; display: none; 
+            background: #181818; padding: 20px; border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #333;
+        }
+        #songTitle { font-size: 18px; margin-bottom: 15px; color: #fff; }
+        
+        audio { width: 100%; outline: none; margin-bottom: 20px; }
+        
+        .btn-download { 
+            display: inline-block; padding: 12px 30px; 
+            background: #1db954; color: black; text-decoration: none; 
+            border-radius: 30px; font-weight: bold; transition: 0.2s;
+        }
+        .btn-download:hover { background: #1ed760; transform: scale(1.05); }
+        
+        .loading { display: none; margin-top: 20px; color: #aaa; font-style: italic; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>🎵 Pure Music Search</h2>
+        
+        <div class="search-wrapper">
+            <input type="text" id="searchInput" placeholder="Search for a song..." autocomplete="off">
+            <div id="suggestionsBox" class="suggestions-box"></div>
+        </div>
+
+        <div id="loadingText" class="loading">Searching & Buffering Audio...</div>
+
+        <div id="playerArea" class="player-box">
+            <div id="songTitle">Song Name</div>
+            <audio id="audioPlayer" controls></audio>
+            <div>
+                <a id="downloadLink" href="#" class="btn-download">Download MP3</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const suggestionsBox = document.getElementById('suggestionsBox');
+        const playerArea = document.getElementById('playerArea');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const downloadLink = document.getElementById('downloadLink');
+        const songTitle = document.getElementById('songTitle');
+        const loadingText = document.getElementById('loadingText');
+
+        let debounceTimer;
+
+        // --- 1. Debounce Input Logic ---
+        searchInput.addEventListener('input', () => {
+            const query = searchInput.value.trim();
+            suggestionsBox.style.display = 'none';
+            clearTimeout(debounceTimer);
+
+            if (query.length > 1) {
+                // 300ms wait karega user ke rukne ka
+                debounceTimer = setTimeout(() => fetchSuggestions(query), 300);
+            }
+        });
+
+        // --- 2. Fetch Filtered Suggestions ---
+        async function fetchSuggestions(query) {
+            try {
+                const res = await fetch(`/suggest?q=${encodeURIComponent(query)}`);
+                const suggestions = await res.json();
+                
+                if (suggestions.length > 0) {
+                    showSuggestions(suggestions);
+                }
+            } catch (err) {
+                console.error("Suggestion Error");
+            }
+        }
+
+        // --- 3. Display Suggestions ---
+        function showSuggestions(list) {
+            suggestionsBox.innerHTML = '';
+            list.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'suggestion-item';
+                div.textContent = item;
+                div.onclick = () => playSong(item); // Click karne par play function chalega
+                suggestionsBox.appendChild(div);
+            });
+            suggestionsBox.style.display = 'block';
+        }
+
+        // --- 4. Play Logic ---
+        function playSong(query) {
+            // UI Update
+            searchInput.value = query;
+            suggestionsBox.style.display = 'none';
+            playerArea.style.display = 'none';
+            loadingText.style.display = 'block';
+            songTitle.innerText = query;
+
+            // Stop previous audio
+            audioPlayer.pause();
+            audioPlayer.currentTime = 0;
+
+            // Set New Source
+            const encodedQuery = encodeURIComponent(query);
+            audioPlayer.src = `/play?q=${encodedQuery}`;
+            downloadLink.href = `/download?q=${encodedQuery}`;
+
+            // Jab audio ready ho jaye
+            audioPlayer.onloadeddata = () => {
+                loadingText.style.display = 'none';
+                playerArea.style.display = 'block';
+                audioPlayer.play();
+            };
+            
+            // Error handling agar audio na chale
+            audioPlayer.onerror = () => {
+                loadingText.innerText = "Error loading song. Try another.";
+            };
+        }
+
+        // Close dropdown on outside click
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.search-wrapper')) {
+                suggestionsBox.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
