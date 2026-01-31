@@ -1,4 +1,5 @@
 const express = require("express");
+const axios = require("axios");
 const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,55 +9,46 @@ app.use(express.static(path.join(__dirname, "public")));
 // ✅ 1. HOME ROUTE
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
-// ✅ 2. PLAY ROUTE (JioSaavn API - No YouTube, No Blocks)
+// ✅ 2. PLAY ROUTE (Axios + JioSaavn API)
 app.get("/play", async (req, res) => {
     const query = req.query.q;
-    if (!query) return res.status(400).send("No query");
+    if (!query) return res.status(400).send("Gaana likho bhai!");
 
     try {
-        console.log(`🎵 Searching Music API: ${query}`);
+        console.log(`🎵 Searching: ${query}`);
         
-        // Search for song
-        const searchRes = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`);
-        const searchData = await searchRes.json();
-
-        if (!searchData.data || searchData.data.results.length === 0) {
-            return res.status(404).send("Song not found");
+        // Search API call
+        const response = await axios.get(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`);
+        
+        if (!response.data || !response.data.data.results.length) {
+            return res.status(404).send("Gaana nahi mila.");
         }
 
-        // Get the top result's best quality download link
-        const song = searchData.data.results[0];
-        const downloadUrl = song.downloadUrl[song.downloadUrl.length - 1].url; // Highest quality link
+        const song = response.data.data.results[0];
+        // 320kbps link sabse last mein hota hai
+        const downloadUrl = song.downloadUrl[song.downloadUrl.length - 1].url;
 
-        console.log(`✅ Playing: ${song.name}`);
-
-        // Direct redirect to the audio URL (No FFmpeg needed, much faster!)
+        console.log(`✅ Success: Playing ${song.name}`);
+        
+        // Browser ko direct gaane ke link par bhej do
         res.redirect(downloadUrl);
 
     } catch (err) {
-        console.error("❌ Error:", err.message);
-        res.status(500).send("Music server busy, try again.");
+        console.error("❌ Error details:", err.message);
+        res.status(500).send("Server Busy. Refresh karke dekho.");
     }
 });
 
-// ✅ 3. SUGGESTIONS
-app.get("/suggest", async (req, res) => {
-    try {
-        const response = await fetch(`https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(req.query.q)}`);
-        const data = await response.json();
-        res.json(data[1].slice(0, 7));
-    } catch (err) { res.json([]); }
-});
-
-// ✅ 4. DOWNLOAD ROUTE
+// ✅ 3. DOWNLOAD ROUTE
 app.get("/download", async (req, res) => {
-    const query = req.query.q;
     try {
-        const searchRes = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`);
-        const searchData = await searchRes.json();
-        const downloadUrl = searchData.data.results[0].downloadUrl[searchData.data.results[0].downloadUrl.length - 1].url;
+        const query = req.query.q;
+        const response = await axios.get(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`);
+        const downloadUrl = response.data.data.results[0].downloadUrl[response.data.data.results[0].downloadUrl.length - 1].url;
         res.redirect(downloadUrl);
-    } catch (err) { res.status(500).send("Download error"); }
+    } catch (err) {
+        res.status(500).send("Download error.");
+    }
 });
 
 app.listen(PORT, () => console.log(`🚀 Music App Ready on Port ${PORT}`));
